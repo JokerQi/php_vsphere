@@ -1,0 +1,461 @@
+<?php
+class vm_sdk{
+	var $options = array();
+	//设置curl_opt
+	private function setOptions($url, $httpMethod = 'POST', $httpParams = array(), $isUsrPsw = 0, $usrPsw = '', $isHead = 0, $headInfo = array(), $isUpFile = 0, $upFile = array()){
+		$baseOptArray = array();
+		$httpOptArray = array();
+		$usrPswOptArray = array();
+		$headOptArray = array();
+		$upFileOptArray = array();
+		$upFileOptArray = array();
+		
+		$baseOptArray = array(
+			CURLOPT_SSL_VERIFYHOST => 0,
+			CURLOPT_SSL_VERIFYPEER => 0,
+			CURLOPT_RETURNTRANSFER => 1,
+			CURLOPT_TIMEOUT => 1000000,
+			CURLOPT_URL => $url,			
+		);
+
+		$httpMethod = strtoupper($httpMethod);
+		if($httpMethod == ''){
+			$httpMethod = 'POST';
+		}
+
+		$postFlag = 1;
+		if($httpMethod !== 'POST'){
+			$postFlag = 0;				
+		}
+
+		$httpOptArray = array(
+			CURLOPT_CUSTOMREQUEST => $httpMethod,
+			CURLOPT_POST => $postFlag,
+			CURLOPT_POSTFIELDS => $httpParams 
+		);	
+
+		if($isUsrPsw){
+			$usrPswOptArray = array(
+				CURLOPT_USERPWD => $usrPsw
+			);
+		}
+
+		if($isHead){
+			$headOptArray = array(
+				CURLOPT_HTTPHEADER => $headInfo
+			);
+		}
+
+		if($isUpFile){
+			$upFileOptArray = array(
+
+			);
+		}
+
+		$this->options = $baseOptArray + $httpOptArray + $usrPswOptArray + $headOptArray + $upFileOptArray;
+
+		return $this->options;
+	}
+
+	//执行curl
+	private function exCurl(){
+		$ch = curl_init();
+		curl_setopt_array($ch, $this->options);
+		$out = json_decode(curl_exec($ch),true);
+
+		if($out === false) {
+		  echo 'Curl Error: ' . curl_error($ch);
+		  exit;
+		}
+
+		curl_close($ch);
+		
+		return $out;				
+	}
+
+	/*
+	**@获取虚拟机SESSSIONID
+	**$url：取sessionid的地址
+	**$usrPsw：登录的用户名和密码
+	*/
+	function getVmSessionId($url, $usrPsw){
+		$httpMethod = 'POST';
+		$isUsrPsw = 1;
+
+		$this->setOptions($url, $httpMethod, '', $isUsrPsw, $usrPsw);
+
+		$sid = $this->exCurl();
+
+		return $sid['value'];
+	}
+	
+	/*
+	**@获取平台信息
+	**$sid：sessionid
+	**$baseUrl：获取平台信息基本地址；例如：https://{{server}}/rest
+	**$resorceType：资源类型，数据类型string；默认：cluster，可选：datacenter、datastore、folder、host、network、resource-pool、vm
+	**$param：请求参数，数据类型array
+	*/	
+	function getPlatformInfo($sid, $baseUrl, $resorceType = 'cluster', $params = array()){
+		if(!is_array($params)){
+			exit("error: $params not arrry!");
+		}	
+		$urlParms = '';
+		if(!empty($params)){
+			foreach($params as $k => $v){	
+				if($urlParms != '') $urlParms .= '/';		
+				if(is_numeric($k)){
+					$urlParms .= $v;
+				}else{
+					$urlParms .= $k.':'.$v;		
+				}											
+			}
+		}
+		$url = $baseUrl.'/'.$resorceType.'/'.$urlParms;		
+		$httpMethod = 'GET';			
+		$isUsrPsw = 0;
+		$isHead = 1;
+		$headInfo = array("vmware-api-session-id:$sid");
+
+		$this->setOptions($url, $httpMethod, '', $isUsrPsw, '', $isHead, $headInfo);
+
+		$platformInfo = $this->exCurl();
+
+		return $platformInfo['value'];	
+	}
+
+	/*
+	**@从内容库中创建虚拟机
+	**$sid：要取的sessionid
+	**$baseUrl：获取平台信息基本地址
+	**$libraryItemId：内容库ID
+	**$hostId：宿主机ID
+	**$resorcePoolId：资源池ID
+	**$vmName：需要创建的虚拟机名称
+	*/
+	function createVM_ovf($sid,$baseUrl,$libraryItemId,$hostId,$resorcePoolId,$vmName){
+		$httpMethod = 'POST';
+		$isHead = 1;
+		$headInfo = array(
+			"Content-Type:application/json",
+			"Accept:application/json",
+			"vmware-api-session-id:$sid"
+		);
+		$url = $baseUrl."/com/vmware/vcenter/ovf/library-item/id:".$libraryItemId."?~action=deploy";
+		$arr = array(
+			"target" => array(
+				"host_id" => $hostId,
+				"resource_pool_id" => $resorcePoolId
+			),
+			"deployment_spec" => array(
+				"name" => $vmName,
+				"accept_all_EULA" => true
+			)
+		);
+		$arr = json_encode($arr);
+		$this->setOptions($url, $httpMethod, $arr, 0, '', $isHead, $headInfo);
+
+		$res = $this->exCurl();
+
+		return $res;		
+	}
+
+	/*
+	**@创建虚拟机
+	**$sid：要取的sessionid
+	**$vmSet：虚拟机配置，数据类型：array
+	**$url：创建虚拟机api
+	*/	
+	function createVM($sid, $url){
+		$httpMethod = 1;
+		$isHead = 1;
+		$headInfo = array("vmware-api-session-id:$sid");
+
+		$vmSet = '{
+			"spec": {
+
+			  "placement": {
+				"resource_pool": "resgroup-8",
+				"cluster": "domain-c7",
+				"folder": "group-v3",
+				"host": "10.200.7.238",
+				"datastore": "datastore-11"
+			  },
+			  "name": "wmq_01",
+			  "floppies": [],
+			  "boot": {
+				"enter_setup_mode": true,
+				"retry": false,
+				"efi_legacy_boot": [],
+				"network_protocol": [],
+				"delay": 0,
+				"retry_delay": 10000,
+				"type": "BIOS"
+			  },
+			  "disks": [
+				{
+				  "new_vmdk": {},
+				  "backing": {
+					"vmdk_file": "[datastore1] xp/xp.vmdk",
+					"type": "VMDK_FILE"
+				  },
+				  "sata": {
+					"bus": 1,
+					"unit": 1
+				  },
+				  "scsi": {
+					"bus": 1,
+					"unit": 1
+				  },
+				  "ide": {
+					"master": true,
+					"primary": true
+				  },
+				  "type": "IDE"
+				}
+			  ],
+			  "boot_devices": [],
+			  "hardware_version": "VMX_10",
+			  "guest_OS": "WIN_XP_PRO",
+			  "nics": [
+				{
+				  "backing": None,
+				  "pci_slot_number": None,
+				  "allow_guest_control": true,
+				  "mac_type": None,
+				  "upt_compatibility_enabled": true,
+				  "wake_on_lan_enabled": true,
+				  "start_connected": true,
+				  "mac_address": None,
+				  "type": None
+				}
+			  ],
+			  "parallel_ports": [],
+			  "memory": {
+				"hot_add_enabled": "",
+				"size_MiB": 1024
+			  },
+			  "scsi_adapters": [],
+			  "sata_adapters": [],
+			  "cpu": {
+				"count": 1,
+				"hot_add_enabled": false,
+				"hot_remove_enabled": false,
+				"cores_per_socket": 1
+			  },
+			  "serial_ports": []
+			}
+		  }';
+		$vmSet = json_decode($vmSet);
+
+		$this->setOptions($url, $httpMethod, $vmSet, 0, '', $isHead, $headInfo);
+
+		$vmInfo = $this->exCurl();
+
+		return $vmInfo;		
+
+	}
+
+	/*
+	**@获取虚拟机电源状态
+	**$sid：要取的sessionid
+	**$vmid：虚拟机id
+	**$baseUrl：虚拟机电源状态接口
+	*/
+	function getVmPowerState($sid, $baseUrl, $vmid){
+
+		$res = $this->getPlatformInfo($sid, $baseUrl, 'vm', array($vmid,'power'));
+		return $res['state'];				
+	}	
+	/*
+	**@开启/关闭虚拟机
+	**$sid：要取的sessionid
+	**$vmid：虚拟机id
+	**$baseUrl：开关虚拟机api
+	**$SSflag：开关标志位，开：true，关：false
+	*/	
+	function SSVM($sid, $baseUrl, $vmid, $SSflag = true){
+		$httpMethod = 'POST';
+		$isHead = 1;
+		$headInfo = array("vmware-api-session-id:$sid");
+		$ss = 'start';
+		if(!$SSflag){
+			$ss = 'stop';
+		}
+
+		$url = $baseUrl.'/'.$vmid.'/power/'.$ss;
+
+		$this->setOptions($url, $httpMethod, array(), 0, '', $isHead, $headInfo);
+
+		$res = $this->exCurl();
+
+		return $res;				
+	}
+	/*
+	**@删除虚拟机
+	**$sid：要取的sessionid
+	**$vmid：虚拟机id
+	**$baseUrl：删除虚拟机api
+	*/	
+	function deleteVM($sid, $baseUrl, $vmid){
+		$resp = 'error: vm is power on!';
+		$httpMethod = 'DELETE';
+		$isHead = 1;
+		$headInfo = array("vmware-api-session-id:$sid");
+		$url = $baseUrl.'/'.$vmid;
+		$powerStateUrl = $url.'/power';
+
+		$vmPowerState = $this->getVmPowerState($sid, $powerStateUrl, $vmid);
+
+		if($vmPowerState == 'POWERED_ON'){
+			$res = $this->SSVM($sid, $baseUrl, $vmid, false);
+		}
+
+		if(!$res){
+			$this->setOptions($url, $httpMethod, '', 0, '', $isHead, $headInfo);
+			$resp = $this->exCurl();
+		}
+		
+		return $resp;	
+	}	
+
+	/*
+	**@获取库id列表
+	**$sid：要去的sessionid
+	**$baseUrl：获取库id的地址;https://vcenter/rest/com/vmware/content/library
+	*/	
+	function getLibraryIdList($sid, $baseUrl){
+		$libList = $this->getPlatformInfo($sid, $baseUrl, 'library');
+		return $libList;		
+	}
+	/*
+	**@创建库Item
+	**$sid：要去的sessionid
+	**$url：获取库id的地址
+	*/	
+	function createLibraryItem($sid, $url){
+		$spec = '{
+			"client_token": "string",
+			"create_spec": {
+			  "library_id": "string",
+			  "description": "string",
+			  "metadata_version": "string",
+			  "cached": true,
+			  "type": "string",
+			  "source_id": "string",
+			  "version": "string",
+			  "content_version": "string",
+			  "size": 0,
+			  "id": "string",
+			  "name": "string"
+			}
+		}';
+		$spec = json_decode($spec);
+		$httpMethod = 'POST';
+		$isHead = 1;
+		$headInfo = array("vmware-api-session-id:$sid");
+
+		$this->setOptions($url, $httpMethod, $spec, 0, '', $isHead, $headInfo);
+
+		$libList = $this->exCurl();
+
+		return $libList['value'];		
+	}	
+	/*
+	**@获取库ItemID列表
+	**$sid：要去的sessionid
+	**$libraryId：库id
+	**$url：获取库的地址
+	*/	
+	function getLibraryItemList($sid, $baseUrl, $libraryId){
+		$params = array(
+			'item?library_id='.$libraryId
+		);
+		$libItemList = $this->getPlatformInfo($sid, $baseUrl, 'library', $params);
+		return $libItemList;		
+	}
+	/*
+	**@获取镜像信息
+	**$sid：要去的sessionid
+	**$baseUrl：获取库的地址
+	**$itemId：组id
+	*/	
+	function getImageInfo($sid, $baseUrl, $itemId){
+		$params = array(
+			'item',
+			'id' => $itemId
+		);
+		$imgInfo = $this->getPlatformInfo($sid, $baseUrl, 'library', $params);
+		return $imgInfo;			
+	}	
+}
+
+/*
+CURLOPT_SSL_VERIFYHOST => 0,
+CURLOPT_SSL_VERIFYPEER => 0,			
+//当你上传一个文件到远程站点，这个选项告诉PHP你上传文件的大小。
+CURLOPT_INFILESIZE => 1,
+//如果你想CURL报告每一件意外的事情，设置这个选项为一个非零值。
+CURLOPT_VERBOSE => 0,
+//如果你想把一个头包含在输出中，设置这个选项为一个非零值。
+CURLOPT_HEADER => 0,
+//如果你不会PHP为CURL传输显示一个进程条，设置这个选项为一个非零值。
+CURLOPT_NOPROGRESS => 0,
+//如果你不想在输出中包含body部分，设置这个选项为一个非零值。
+CURLOPT_NOBODY => 0,
+//如果你想让PHP在发生错误(HTTP代码返回大于等于300)时，不显示，设置这个选项为一人非零值。
+CURLOPT_FAILONERROR =>0,
+// 如果你想让PHP为上传做准备，设置这个选项为一个非零值。
+CURLOPT_UPLOAD => 0,
+//如果你想PHP去做一个正规的HTTP POST，设置这个选项为一个非零值。
+CURLOPT_POST => 1,
+//设置这个选项为非零值，PHP将列出FTP的目录名列表。
+CURLOPT_FTPLISTONLY => 0,
+//设置这个选项为一个非零值，PHP将应用远程文件代替覆盖它。
+CURLOPT_FTPAPPEND => 0,
+//设置这个选项为一个非零值，PHP将在你的 ~./netrc 文件中查找你要建立连接的远程站点的用户名及密码。
+CURLOPT_NETRC => 0,
+//设置这个选项为一个非零值(象 “Location: “)的头，服务器会把它当做HTTP头的一部分发送(注意这是递归的，PHP将发送形如 “Location: “的头)。
+CURLOPT_FOLLOWLOCATION => 0,
+//设置这个选项为一个非零值去用HTTP上传一个文件。
+CURLOPT_PUT => 0,
+//设置这个选项为一个非零值，PHP对于CURL函数将完全沉默。
+CURLOPT_MUTE => 0,
+// 设置一个长整形数，作为最大延续多少秒。
+CURLOPT_TIMEOUT => 10,
+//设置一个长整形数，控制传送多少字节。
+CURLOPT_LOW_SPEED_LIMIT => 1000000,
+//设置一个长整形数，控制多少秒传送CURLOPT_LOW_SPEED_LIMIT规定的字节数。
+CURLOPT_LOW_SPEED_TIME => 60,
+//传递一个包含字节偏移地址的长整形参数
+CURLOPT_RESUME_FROM => 0,
+//传递一个包含SSL版本的长参数。
+CURLOPT_SSLVERSION => 0,
+//传递一个长参数，指定怎么处理CURLOPT_TIMEVALUE参数。
+CURLOPT_TIMECONDITION  => 0,
+//传递一个从1970-1-1开始到现在的秒数。
+CURLOPT_TIMEVALUE => 0,
+//这是你想用PHP取回的URL地址。
+CURLOPT_URL => '',
+//传递一个形如[username]:[password]风格的字符串,作用PHP去连接。
+CURLOPT_USERPWD => '',
+//传递一个形如[username]:[password] 格式的字符串去连接HTTP代理。
+CURLOPT_PROXYUSERPWD => '',
+//传递一个你想指定的范围。HTTP传送同样支持几个间隔，用逗句来分隔(X-Y,N-M)。
+CURLOPT_RANGE => '',
+//传递一个作为HTTP “POST”操作的所有数据的字符串。
+CURLOPT_POSTFIELDS => '',
+//在HTTP请求中包含一个”referer”头的字符串。
+CURLOPT_REFERER => '',
+//在HTTP请求中包含一个”user-agent”头的字符串。
+CURLOPT_USERAGENT => '',
+//传递一个包含被ftp “POST”指令使用的IP地址
+CURLOPT_FTPPORT => '',
+//传递一个包含HTTP cookie的头连接。
+CURLOPT_COOKIE  =>'',
+//传递一个包含PEM格式证书的字符串。
+CURLOPT_SSLCERT => '',
+//传递一个包含使用CURLOPT_SSLCERT证书必需的密码。
+CURLOPT_SSLCERTPASSWD => '',
+*/
+?>
